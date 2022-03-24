@@ -6,14 +6,16 @@
 
 #define DEBOUNCE_TIME_MS 100 //Required to prevent double button events
 #define KEYPAD_SCAN_INTERVAL_MS 2
+#define GAME_TIMEOUT_MS 180000 //Time after game will be reset
 #define N_PIXELS N_BUTTONS
 #define NEO_PIN 1
 #define N_PAIRS 6
-#define GAIN 0.03 //Volume of speaker
+#define GAIN 1.5 //Volume of speaker
 #define ANIMATION_INTERVAL_MS 100
 #define PLAYING_PIXEL_INTERVAL_MS 250
 #define BLINK_HEART_UPDATE_INTERVAL_MS 10
 #define STARTUP_ANIMATION_INTERVAL_MS 500
+#define PIR_TRIGGER_BACKOFF_MS 120000
 #define INCORRECT_MOVE_COLOR Adafruit_NeoPixel::Color(255, 0, 0)
 #define CORRECT_MOVE_COLOR Adafruit_NeoPixel::Color(0, 255, 0)
 #define CURRENT_MOVE_COLOR Adafruit_NeoPixel::Color(0, 0, 255)
@@ -42,6 +44,7 @@ const int PIXEL_MAPPING[N_PIXELS] = {
 
 enum State {
   PLAY_STARTUP_SOUND,
+  WAIT_GAME_START,
   WAIT_FIRST_MOVE,
   PLAY_FIRST_MOVE_SAMPLE,
   WAIT_SECOND_MOVE,
@@ -63,11 +66,10 @@ unsigned long last_startup_animation;
 int startup_animation_state;
 bool playing;
 bool playing_pixel_state;
-bool first_time;
 uint32_t PINK_COLOR_WHEEL[N_PIXELS];
 int tuples[N_BUTTONS];
 bool completed_buttons[N_BUTTONS];
-int n_completed_buttons;
+int n_completed_pairs;
 int first;
 int second;
 unsigned long last_press;
@@ -75,6 +77,8 @@ unsigned long last_scan;
 unsigned long last_animation;
 unsigned long last_play_pixel;
 unsigned long last_intensity_update;
+unsigned long last_game_activity;
+unsigned long last_pir_trigger;
 int color_pos;
 int playing_pixel;
 int heart_intensity;
@@ -103,15 +107,10 @@ void initializeGame()
   }
   first = -1;
   second = -1;
-  n_completed_buttons = 0;
+  n_completed_pairs = 0;
   pixels.clear();
   pixels.show();
-  if (first_time) {
-    playSoundAndSetGameState(STARTUP_MP3, PLAY_STARTUP_SOUND);
-    first_time = 0;
-  } else {
-    game_state = WAIT_FIRST_MOVE;
-  }
+  playSoundAndSetGameState(STARTUP_MP3, PLAY_STARTUP_SOUND);
 }
 
 void initializePinkColorwheel() {
@@ -156,6 +155,7 @@ void setup()
   last_play_pixel = millis();
   last_intensity_update = millis();
   last_startup_animation = millis();
+  last_pir_trigger = millis();
 
   startup_animation_state = 0;
 
@@ -163,7 +163,6 @@ void setup()
   heart_intensity = 255;
   intensity_direction = -1;
 
-  first_time = 1;
   initializeGame();
 }
 
@@ -174,6 +173,7 @@ void handleFirstMove(int index) {
   }
 
   first = index;
+  syncPixelsWithCompletedMoves();
   pixels.setPixelColor(PIXEL_MAPPING[first], CURRENT_MOVE_COLOR);
   pixels.show();
   int sample_index = tuples[first];
@@ -190,14 +190,14 @@ void syncPixelsWithCompletedMoves() {
 void handleCorrectMove() {
   completed_buttons[first] = 1;
   completed_buttons[second] = 1;
-  n_completed_buttons++;
+  n_completed_pairs++;
   syncPixelsWithCompletedMoves();
 }
 
 void fastForwardToNextMove(int index) {
   if (tuples[first] == tuples[second]) {
     handleCorrectMove();
-    if (n_completed_buttons == N_PAIRS) {
+    if (n_completed_pairs == N_PAIRS) {
       playSoundAndSetGameState(COMPLETED_MP3, PLAY_COMPLETED_SOUND);
     } else {
       handleFirstMove(index);
@@ -224,15 +224,18 @@ void handleSecondMove(int index) {
 }
 
 void handleButtonPress(int index) {
-  if (completed_buttons[index] && n_completed_buttons < N_PAIRS) return;
+  last_game_activity = millis();
+
+  if (completed_buttons[index] && n_completed_pairs < N_PAIRS) return;
 
   switch (game_state) {
     case PLAY_SECOND_MOVE_SAMPLE:
       fastForwardToNextMove(index);
       break;
     case PLAY_INCORRECT_MOVE_SOUND:
-      syncPixelsWithCompletedMoves();
+    case PLAY_STARTUP_SOUND:
     case PLAY_CORRECT_MOVE_SOUND:
+    case WAIT_GAME_START:
     case WAIT_FIRST_MOVE:
       handleFirstMove(index);
       break;
@@ -252,6 +255,18 @@ bool debounceOk() {
   return lastPressOutsideDebounce;
 }
 
+void scanPir() {
+  if(millis() - last_pir_trigger < PIR_TRIGGER_BACKOFF_MS) return;
+
+  // Trigger startup sound when PIR triggers and no move has been made
+  if (analogRead(A0) > 768 && n_completed_pairs == 0) {
+    last_pir_trigger = millis();
+    if (game_state == WAIT_GAME_START) {
+      playSoundAndSetGameState(STARTUP_MP3, PLAY_STARTUP_SOUND);
+    }
+  }
+}
+
 void scanKeypad() {
   for (int r = 0; r < N_ROWS; r++) {
     // disable previous scan row
@@ -269,10 +284,18 @@ void scanKeypad() {
   }
 }
 
-void handleKeypad() {
+void handleTriggers() {
   if (millis() - last_scan > KEYPAD_SCAN_INTERVAL_MS) {
     last_scan = millis();
+    scanPir();
     scanKeypad();
+  }
+
+  if (millis() - last_game_activity > GAME_TIMEOUT_MS) {
+    last_game_activity = millis();
+    if (game_state != WAIT_GAME_START) {
+      initializeGame();
+    }
   }
 }
 
@@ -315,7 +338,7 @@ void handleIncorrectMove() {
 void checkMove() {
   if (tuples[first] == tuples[second]) {
     handleCorrectMove();
-    if (n_completed_buttons < N_PAIRS) {
+    if (n_completed_pairs < N_PAIRS) {
       playSoundAndSetGameState(CORRECT_MOVE_MP3, PLAY_CORRECT_MOVE_SOUND);
     } else {
       playSoundAndSetGameState(COMPLETED_MP3, PLAY_COMPLETED_SOUND);
@@ -384,7 +407,7 @@ void handleMp3Stopped() {
     case PLAY_STARTUP_SOUND:
       {
         syncPixelsWithCompletedMoves();
-        game_state = WAIT_FIRST_MOVE;
+        game_state = WAIT_GAME_START;
       } break;
     case PLAY_FIRST_MOVE_SAMPLE:
       {
@@ -432,7 +455,7 @@ void handleEvents() {
 
 void loop()
 {
-  handleKeypad();
+  handleTriggers();
 
   if (playing && mp3->isRunning()) {
     if (mp3->loop())
