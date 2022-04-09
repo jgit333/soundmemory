@@ -36,10 +36,10 @@ const int N_ROWS = sizeof(ROW_PINS) / sizeof(ROW_PINS[0]);
 const int N_COLS = sizeof(COL_PINS) / sizeof(COL_PINS[0]);
 const int N_BUTTONS = N_ROWS * N_COLS;
 const int PIXEL_MAPPING[N_PIXELS] = {
-  11, 10, 9,
-  8, 7, 6,
-  5, 4, 3,
-  2, 1, 0
+  0, 4, 8,
+  1, 5, 9,
+  2, 6, 10,
+  3, 7, 11
 };
 
 enum State {
