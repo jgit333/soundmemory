@@ -4,7 +4,7 @@
 #include "AudioFileSourceSPIFFS.h"
 #include <Adafruit_NeoPixel.h>
 
-#define DEBOUNCE_TIME_MS 100 //Required to prevent double button events
+#define DEBOUNCE_TIME_MS 250 //Required to prevent double button events
 #define KEYPAD_SCAN_INTERVAL_MS 2
 #define GAME_TIMEOUT_MS 180000 //Time after game will be reset
 #define N_PIXELS N_BUTTONS
@@ -23,12 +23,12 @@
 #define INCORRECT_MOVE_MP3 "/wrong_answer.mp3"
 #define COMPLETED_MP3 "/cheer.mp3"
 #define STARTUP_MP3 "/startup.mp3"
-#define MP3_LIST "/1.mp3", \
-  "/2.mp3", \
-  "/3.mp3", \
-  "/4.mp3", \
-  "/5.mp3", \
-  "/6.mp3"
+#define MP3_PAIRS {"/1a.mp3", "/1b.mp3"}, \
+  {"/2a.mp3", "/2b.mp3"}, \
+  {"/3a.mp3", "/3b.mp3"}, \
+  {"/4a.mp3", "/4b.mp3"}, \
+  {"/5a.mp3", "/5b.mp3"}, \
+  {"/6a.mp3", "/6b.mp3"}
 
 const int ROW_PINS[] = {D0, D5, D6, D7};
 const int COL_PINS[] = {D3, D2, D1};
@@ -61,7 +61,7 @@ AudioGeneratorMP3 *mp3;
 AudioOutputI2S *out;
 AudioFileSourceSPIFFS *file;
 State game_state;
-String pair_files[] = {MP3_LIST};
+String pair_files[N_PAIRS][2] = {MP3_PAIRS};
 unsigned long last_startup_animation;
 int startup_animation_state;
 bool playing;
@@ -287,7 +287,7 @@ void scanKeypad() {
 void handleTriggers() {
   if (millis() - last_scan > KEYPAD_SCAN_INTERVAL_MS) {
     last_scan = millis();
-    scanPir();
+    //scanPir();
     scanKeypad();
   }
 
@@ -309,6 +309,7 @@ void playSoundAndSetGameState(const char *filename, State state) {
   mp3->begin(file, out);
   playing = 1;
   game_state = state;
+  
   switch (game_state) {
     case PLAY_FIRST_MOVE_SAMPLE:
       {
@@ -323,8 +324,17 @@ void playSoundAndSetGameState(const char *filename, State state) {
   }
 }
 
-void playSoundAndSetGameState(int index, State state) {
-  const char *filename = pair_files[index].c_str();
+void playSoundAndSetGameState(int pair_index, State state) {
+  int sample_index = 0;
+  switch(state) {
+    case PLAY_FIRST_MOVE_SAMPLE:
+      sample_index = 0;
+      break;
+    case PLAY_SECOND_MOVE_SAMPLE:
+      sample_index = 1;
+      break;
+  }
+  const char *filename = pair_files[pair_index][sample_index].c_str();
   playSoundAndSetGameState(filename, state);
 }
 
